@@ -1,9 +1,7 @@
 ---
 title: "Medical Insurance Cost Prediction"
 subtitle: "Supervised Learning - Assignment 1"
-author:
-  - name: "Cesaire Tobias"
-    affiliation: "[Project Repository](https://github.com/ces0491/sl-assignment1.git)"
+author: "Cesaire Tobias"
 date: "April 16, 2025"
 format:
   pdf:
@@ -48,8 +46,9 @@ knitr::opts_chunk$set(
 ```{r load-data}
 rm(list = ls())
 base_data_dir <- "./inst/extdata"
-github_data_url <- "https://raw.githubusercontent.com/ctobias-github/insurance-prediction/main/data/insurance_data.RData"
 
+github_repo <- "https://github.com/ces0491/sl-assignment1.git"
+github_data_url <- "https://github.com/ces0491/sl-assignment1/raw/refs/heads/main/data/insurance_data.RData"
 kaggle_url <- 'kagglehub.dataset_download("mirichoi0218/insurance")'
 
 my_seed <- 756
@@ -94,7 +93,10 @@ The target variable is **charges** - medical costs billed. We aim to build linea
 
 # Data Import and Preparation
 
-We use a sub-sample of 500 observations, randomly selected with seed `r my_seed` for reproducibility. The RData file containing both the full insurance data set (fulldata) and sampled data (my_data) can be found [here](github_data_url). The original dataset can be found on Kaggle, [here](kaggle_url)
+We use a sub-sample of 500 observations, randomly selected with seed `r my_seed`` for reproducibility.  
+The `.RData` file containing both the full insurance data set (`fulldata`) and sampled data (`my_data`) can be found [here](https://github.com/ces0491/sl-assignment1/raw/refs/heads/main/data/insurance_data.RData).  
+The original dataset can be found on Kaggle, [here](https://www.kaggle.com/datasets/mirichoi0218/insurance).  
+Please see the GitHub repo [here](https://github.com/ces0491/sl-assignment1.git) for the full codebase.
 
 ```{r convert-factors}
 if (!exists("insurance_data") || any(is.na(insurance_data))) {
@@ -256,7 +258,7 @@ ggplot2::ggplot(insurance_data, ggplot2::aes(x = charges)) +
 
 Charges are right-skewed, with most values between \$5,000–\$15,000, and some exceeding \$40,000.
 
-```{r interaction-viz, fig.cap="Charges by Smoking Status and BMI vs. Charges", fig.width=7, fig.height=3}
+```{r fig-interaction-viz, fig.cap="Charges by Smoking Status and BMI vs. Charges", fig.width=7, fig.height=3}
 p1 <- ggplot2::ggplot(insurance_data, ggplot2::aes(x = smoker, y = charges, fill = smoker)) +
   ggplot2::geom_boxplot() +
   ggplot2::theme_minimal() +

@@ -54,8 +54,11 @@ knitr::opts_chunk$set(
 ```{r load-data}
 rm(list = ls())
 base_data_dir <- "./inst/extdata"
-github_data_url <- "https://raw.githubusercontent.com/ctobias-github/insurance-prediction/main/data/insurance_data.RData"
+
+github_repo <- "https://github.com/ces0491/sl-assignment1.git"
+github_data_url <- "https://github.com/ces0491/sl-assignment1/raw/refs/heads/main/data/insurance_data.RData"
 kaggle_url <- 'https://www.kaggle.com/datasets/mirichoi0218/insurance'
+
 my_seed <- 756
 
 if (file.exists(file.path(base_data_dir, "insurance.csv"))) {
@@ -109,7 +112,7 @@ The target variable is **charges** - medical costs billed. We aim to build linea
 
 # Data Import and Preparation
 
-We use a sub-sample of 500 observations, randomly selected with seed `r my_seed` for reproducibility. The original dataset can be found on Kaggle, [here](`r kaggle_url`).
+We use a sub-sample of 500 observations, randomly selected with seed `r my_seed` for reproducibility. The RData file containing both the full insurance data set (fulldata) and sampled data (my_data) can be found [here](github_data_url). The original dataset can be found on Kaggle, [here](kaggle_url). Please see the Github repo [here](github_repo) for the full codebase.
 
 # Exploratory Data Analysis
 
