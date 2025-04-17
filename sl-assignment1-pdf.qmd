@@ -1,0 +1,746 @@
+---
+title: "Medical Insurance Cost Prediction"
+subtitle: "Supervised Learning - Assignment 1"
+author:
+  - name: "Cesaire Tobias"
+    affiliation: "[Project Repository](https://github.com/ces0491/sl-assignment1.git)"
+date: "April 16, 2025"
+format:
+  pdf:
+    toc: true
+    number-sections: true
+    colorlinks: true
+    lof: true
+    lot: true
+    documentclass: article
+    geometry: margin=1in
+    fontsize: 11pt
+    linestretch: 1.2
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(kableExtra)
+library(scales)
+library(corrplot)
+library(MASS)
+library(glmnet)
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center",
+  fig.pos = "H",
+  out.width = "80%",
+  results = "asis"
+)
+```
+
+```{r load-data}
+rm(list = ls())
+base_data_dir <- "./inst/extdata"
+github_data_url <- "https://raw.githubusercontent.com/ctobias-github/insurance-prediction/main/data/insurance_data.RData"
+
+kaggle_url <- 'kagglehub.dataset_download("mirichoi0218/insurance")'
+
+my_seed <- 756
+
+# read in full data either from file or github repo
+if (file.exists(file.path(base_data_dir, "insurance.csv"))) {
+  fulldata <- read.csv(file.path(base_data_dir, "insurance.csv"))
+} else {
+  con <- url(github_data_url)
+  load(github_data_url)
+  close(con)
+}
+
+# sample the data
+set.seed(my_seed)
+insurance_data <- fulldata[sample(nrow(fulldata), 500), ]
+
+# save the sampled data
+if (dir.exists(base_data_dir)) {
+  write.csv(insurance_data, file.path(base_data_dir, "my_insurance.csv"), row.names = FALSE)
+}
+```
+
+# Introduction
+
+This report applies linear regression techniques to predict medical insurance costs (charges) in the United States (US) healthcare system. We seek to construct a linear supervised learning model to identify key determinants of individual medical costs billed by health insurance for patients in the US. In doing so, we propose some solutions to address the following questions for stakeholders:
+
+-   **Patients**: Which personal factors most impact insurance charges?
+-   **Insurers**: How can risk be accurately quantified for premiums?
+-   **Policymakers**: Which public health initiatives can reduce costs?
+
+The dataset includes 500 US patients with the following 6 features:
+
+-   **age**: Integer, primary beneficiary's age
+-   **sex**: Factor, gender of insurance contractor (female/male)
+-   **bmi**: Continuous, body mass index
+-   **children**: Integer, number of dependents
+-   **smoker**: Factor, smoking status (yes/no)
+-   **region**: Factor, US residential area (northeast, southeast, southwest, northwest)
+
+The target variable is **charges** - medical costs billed. We aim to build linear models that predict charges based on the aforementioned characteristics, identifying key factors and interactions.
+
+# Data Import and Preparation
+
+We use a sub-sample of 500 observations, randomly selected with seed `r my_seed` for reproducibility. The RData file containing both the full insurance data set (fulldata) and sampled data (my_data) can be found [here](github_data_url). The original dataset can be found on Kaggle, [here](kaggle_url)
+
+```{r convert-factors}
+if (!exists("insurance_data") || any(is.na(insurance_data))) {
+  stop("Insurance data is missing or contains NAs")
+}
+
+insurance_data <- dplyr::mutate(
+  insurance_data,
+  sex = as.factor(sex),
+  smoker = as.factor(smoker),
+  region = as.factor(region),
+  children = as.integer(children)
+)
+```
+
+# Exploratory Data Analysis
+
+## Data Overview
+
+A sample of the dataset is shown below:
+
+```{r show-data-head}
+top_n_sample <- insurance_data %>%
+  dplyr::top_n(5) %>%
+  dplyr::mutate(dplyr::across(c(age, bmi, children, charges), ~round(.x, 2)))
+
+kableExtra::kbl(
+  top_n_sample,
+  caption = "Insurance Dataset Sample (First 5 Rows)",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = 2
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  knitr::asis_output()
+```
+
+Summary statistics for numerical variables:
+
+```{r summary-stats}
+summ_stats <- insurance_data %>%
+  dplyr::select(age, bmi, children, charges) %>%
+  dplyr::summarise(
+    dplyr::across(
+      .cols = dplyr::everything(),
+      .fns = list(
+        Min = ~min(.x, na.rm = TRUE),
+        Q1 = ~quantile(.x, 0.25, na.rm = TRUE),
+        Median = ~median(.x, na.rm = TRUE),
+        Mean = ~mean(.x, na.rm = TRUE),
+        Q3 = ~quantile(.x, 0.75, na.rm = TRUE),
+        Max = ~max(.x, na.rm = TRUE)
+      ),
+      .names = "{.col}_{.fn}"
+    )
+  ) %>%
+  tidyr::pivot_longer(
+    cols = dplyr::everything(),
+    names_to = c("Variable", "Statistic"),
+    names_sep = "_",
+    values_to = "Value"
+  ) %>%
+  tidyr::pivot_wider(names_from = Statistic, values_from = Value) %>%
+  dplyr::mutate(
+    Variable = dplyr::recode(
+      Variable,
+      "age" = "Age",
+      "bmi" = "BMI",
+      "children" = "Children",
+      "charges" = "Charges"
+    )
+  )
+
+kableExtra::kbl(
+  summ_stats,
+  caption = "Summary Statistics of Numerical Variables",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = 2
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  knitr::asis_output()
+```
+
+Categorical variable distributions:
+
+```{r categorical-counts}
+sex_table <- table(insurance_data$sex)
+smoker_table <- table(insurance_data$smoker)
+region_table <- table(insurance_data$region)
+
+cat_summary <- data.frame(
+  Variable = c(
+    "Sex (female)", "Sex (male)",
+    "Smoker (no)", "Smoker (yes)",
+    "Region (northeast)", "Region (northwest)",
+    "Region (southeast)", "Region (southwest)"
+  ),
+  Count = c(
+    sex_table["female"], sex_table["male"],
+    smoker_table["no"], smoker_table["yes"],
+    region_table["northeast"], region_table["northwest"],
+    region_table["southeast"], region_table["southwest"]
+  ),
+  Percentage = c(
+    sex_table["female"]/sum(sex_table)*100, sex_table["male"]/sum(sex_table)*100,
+    smoker_table["no"]/sum(smoker_table)*100, smoker_table["yes"]/sum(smoker_table)*100,
+    region_table["northeast"]/sum(region_table)*100, region_table["northwest"]/sum(region_table)*100,
+    region_table["southeast"]/sum(region_table)*100, region_table["southwest"]/sum(region_table)*100
+  )
+) %>%
+  stats::na.omit()
+
+kableExtra::kbl(
+  cat_summary,
+  caption = "Summary of Categorical Variables",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = 1
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  knitr::asis_output()
+```
+
+Key characteristics:
+
+-   **Age**: 18–65 years, median `r median(insurance_data$age)` years
+-   **BMI**: Median `r round(median(insurance_data$bmi), 1)`, overweight range (25–30)
+-   **Children**: Mostly 0–1, max `r max(insurance_data$children)`
+-   **Charges**: \$`r scales::comma(min(insurance_data$charges))` to \$`r scales::comma(max(insurance_data$charges))`, right-skewed
+-   **Sex**: `r round(sex_table["female"]/sum(sex_table)*100, 1)`% female
+-   **Smoker**: `r round(smoker_table["yes"]/sum(smoker_table)*100, 1)`% smokers
+-   **Region**: Evenly distributed
+
+## Visual Analysis
+
+```{r charges-distribution, fig.cap="Distribution of Insurance Charges", fig.width=5, fig.height=3}
+ggplot2::ggplot(insurance_data, ggplot2::aes(x = charges)) +
+  ggplot2::geom_histogram(bins = 30, fill = "steelblue", color = "white") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(x = "Charges ($)", y = "Frequency") +
+  ggplot2::scale_x_continuous(labels = scales::comma)
+```
+
+Charges are right-skewed, with most values between \$5,000–\$15,000, and some exceeding \$40,000.
+
+```{r interaction-viz, fig.cap="Charges by Smoking Status and BMI vs. Charges", fig.width=7, fig.height=3}
+p1 <- ggplot2::ggplot(insurance_data, ggplot2::aes(x = smoker, y = charges, fill = smoker)) +
+  ggplot2::geom_boxplot() +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(x = "Smoker", y = "Charges ($)") +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  ggplot2::scale_fill_brewer(palette = "Set1") +
+  ggplot2::theme(legend.position = "none")
+
+p2 <- ggplot2::ggplot(insurance_data, ggplot2::aes(x = bmi, y = charges, color = smoker)) +
+  ggplot2::geom_point(alpha = 0.5) +
+  ggplot2::geom_smooth(method = "lm", se = FALSE) +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(x = "BMI", y = "Charges ($)") +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  ggplot2::scale_color_brewer(palette = "Set1")
+
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+Smokers face 3–4 times higher charges. BMI has a stronger effect on charges for smokers, indicating an interaction.
+
+```{r age-charges, fig.cap="Age vs. Charges", fig.width=5, fig.height=3}
+ggplot2::ggplot(insurance_data, ggplot2::aes(x = age, y = charges, color = smoker)) +
+  ggplot2::geom_point(alpha = 0.5) +
+  ggplot2::geom_smooth(method = "lm", se = TRUE, color = "black") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(x = "Age (years)", y = "Charges ($)") +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  ggplot2::scale_color_brewer(palette = "Set1")
+```
+
+Age has a positive linear relationship with charges.
+
+```{r children-charges, fig.cap="Children vs. Charges", fig.width=5, fig.height=3}
+ggplot2::ggplot(insurance_data, ggplot2::aes(x = as.factor(children), y = charges)) +
+  ggplot2::geom_boxplot(fill = "lightblue") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(x = "Number of Children", y = "Charges ($)") +
+  ggplot2::scale_y_continuous(labels = scales::comma)
+```
+
+More children slightly increase charges, less impactful than age or smoking.
+
+```{r correlation-matrix, fig.cap="Correlation Matrix", fig.width=4, fig.height=4}
+correlation_matrix <- cor(insurance_data[, c("age", "bmi", "children", "charges")])
+corrplot::corrplot(
+  correlation_matrix,
+  method = "circle",
+  type = "upper",
+  tl.col = "black",
+  tl.srt = 45,
+  addCoef.col = "black",
+  col = colorRampPalette(c("#6D9EC1", "white", "#E46726"))(200),
+  mar = c(0, 0, 2, 0),
+  title = "Correlation Matrix of Numerical Variables"
+)
+```
+
+Correlations: age (r = `r round(correlation_matrix['age','charges'], 2)`), BMI (r = `r round(correlation_matrix['bmi','charges'], 2)`), children (r = `r round(correlation_matrix['children','charges'], 2)`) with charges; low multicollinearity.
+
+## Key Findings
+
+-   **Smoking**: Dominant factor, significantly increasing charges
+-   **Age**: Linear increase in charges
+-   **BMI**: Stronger effect for smokers
+-   **Children**: Modest effect
+-   **Region/Gender**: Minor impact
+-   **Charges**: Right-skewed distribution
+
+# Model Building
+
+## Data Splitting
+
+```{r data-split}
+set.seed(my_seed)
+train_split <- 0.8
+train_indices <- sample(nrow(insurance_data), train_split * nrow(insurance_data))
+train_data <- insurance_data[train_indices, ]
+test_data <- insurance_data[-train_indices, ]
+```
+
+`r paste0("Training set:", nrow(train_data), "observations (", scales::percent(train_split), ") of ", nrow(insurance_data), " in the total sample")`
+`r paste0("Testing set:", nrow(test_data), "observations")`
+
+## Full Regression Model
+
+```{r full-model}
+full_model <- lm(charges ~ age + sex + bmi + children + smoker + region, data = train_data)
+full_model_summary <- summary(full_model)
+```
+
+```{r full-model-table}
+coef_table <- data.frame(
+  Term = rownames(full_model_summary$coefficients),
+  Coefficient = round(full_model_summary$coefficients[,1], 2),
+  Std_Error = round(full_model_summary$coefficients[,2], 2),
+  t_value = round(full_model_summary$coefficients[,3], 2),
+  p_value = round(full_model_summary$coefficients[,4], 3)
+) %>%
+  dplyr::mutate(
+    Significant = ifelse(p_value < 0.05, "*", "")
+  )
+
+kableExtra::kbl(
+  coef_table,
+  caption = "Full Regression Model Coefficients",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = c(0, 2, 2, 2, 3, 0),
+  col.names = c("Term", "Coefficient", "Std. Error", "t value", "p value", ""),
+  escape = FALSE
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  kableExtra::column_spec(5, bold = coef_table$p_value < 0.05) %>%
+  knitr::asis_output()
+```
+
+R² = `r round(full_model_summary$r.squared, 3)`. Smoking, age, and BMI are significant predictors.
+
+```{r full-model-predict}
+full_model_pred <- predict(full_model, newdata = test_data)
+full_model_mse <- mean((test_data$charges - full_model_pred)^2)
+full_model_rmse <- sqrt(full_model_mse)
+full_model_mae <- mean(abs(test_data$charges - full_model_pred))
+full_model_r2 <- 1 - sum((test_data$charges - full_model_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+```
+
+Test metrics: RMSE \$`r scales::comma(full_model_rmse)`, MAE \$`r scales::comma(full_model_mae)`, R² `r round(full_model_r2, 3)`.
+
+# Model Improvement
+
+## Variable Selection and Regularization
+
+We explored stepwise (AIC/BIC), Ridge, and LASSO regression.
+
+```{r model-improvement}
+step_model_aic <- MASS::stepAIC(full_model, direction = "backward", trace = FALSE)
+step_model_bic <- MASS::stepAIC(full_model, direction = "backward", k = log(nrow(train_data)), trace = FALSE)
+
+step_aic_pred <- predict(step_model_aic, newdata = test_data)
+step_aic_mse <- mean((test_data$charges - step_aic_pred)^2)
+step_aic_rmse <- sqrt(step_aic_mse)
+step_aic_r2 <- 1 - sum((test_data$charges - step_aic_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+
+step_bic_pred <- predict(step_model_bic, newdata = test_data)
+step_bic_mse <- mean((test_data$charges - step_bic_pred)^2)
+step_bic_rmse <- sqrt(step_bic_mse)
+step_bic_r2 <- 1 - sum((test_data$charges - step_bic_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+
+x_train <- model.matrix(charges ~ age + sex + bmi + children + smoker + region, train_data)[,-1]
+y_train <- train_data$charges
+x_test <- model.matrix(charges ~ age + sex + bmi + children + smoker + region, test_data)[,-1]
+y_test <- test_data$charges
+
+set.seed(my_seed)
+cv_ridge <- glmnet::cv.glmnet(x_train, y_train, alpha = 0, nfolds = 10)
+lambda_ridge <- cv_ridge$lambda.min
+ridge_model <- glmnet::glmnet(x_train, y_train, alpha = 0, lambda = lambda_ridge)
+ridge_pred <- predict(ridge_model, s = lambda_ridge, newx = x_test)
+ridge_mse <- mean((y_test - ridge_pred)^2)
+ridge_rmse <- sqrt(ridge_mse)
+ridge_r2 <- 1 - sum((y_test - ridge_pred)^2) / sum((y_test - mean(y_test))^2)
+
+cv_lasso <- glmnet::cv.glmnet(x_train, y_train, alpha = 1, nfolds = 10)
+lambda_lasso <- cv_lasso$lambda.min
+lasso_model <- glmnet::glmnet(x_train, y_train, alpha = 1, lambda = lambda_lasso)
+lasso_pred <- predict(lasso_model, s = lambda_lasso, newx = x_test)
+lasso_mse <- mean((y_test - lasso_pred)^2)
+lasso_rmse <- sqrt(lasso_mse)
+lasso_r2 <- 1 - sum((y_test - lasso_pred)^2) / sum((y_test - mean(y_test))^2)
+```
+
+```{r stepwise-features}
+step_aic_features <- names(coef(step_model_aic))
+step_bic_features <- names(coef(step_model_bic))
+lasso_coefs <- coef(lasso_model, s = lambda_lasso)
+lasso_features <- rownames(lasso_coefs)[lasso_coefs[,1] != 0]
+
+feature_comparison <- data.frame(
+  Feature = c("Intercept", "Age", "Sex (male)", "BMI", "Children", "Smoker (yes)",
+              "Region (northwest)", "Region (southeast)", "Region (southwest)"),
+  Full_Model = rep("x", 9),
+  Stepwise_AIC = c(
+    ifelse("(Intercept)" %in% step_aic_features, "x", ""),
+    ifelse("age" %in% step_aic_features, "x", ""),
+    ifelse("sexmale" %in% step_aic_features, "x", ""),
+    ifelse("bmi" %in% step_aic_features, "x", ""),
+    ifelse("children" %in% step_aic_features, "x", ""),
+    ifelse("smokeryes" %in% step_aic_features, "x", ""),
+    ifelse("regionnorthwest" %in% step_aic_features, "x", ""),
+    ifelse("regionsoutheast" %in% step_aic_features, "x", ""),
+    ifelse("regionsouthwest" %in% step_aic_features, "x", "")
+  ),
+  Stepwise_BIC = c(
+    ifelse("(Intercept)" %in% step_bic_features, "x", ""),
+    ifelse("age" %in% step_bic_features, "x", ""),
+    ifelse("sexmale" %in% step_bic_features, "x", ""),
+    ifelse("bmi" %in% step_bic_features, "x", ""),
+    ifelse("children" %in% step_bic_features, "x", ""),
+    ifelse("smokeryes" %in% step_bic_features, "x", ""),
+    ifelse("regionnorthwest" %in% step_bic_features, "x", ""),
+    ifelse("regionsoutheast" %in% step_bic_features, "x", ""),
+    ifelse("regionsouthwest" %in% step_bic_features, "x", "")
+  ),
+  LASSO = c(
+    ifelse("(Intercept)" %in% lasso_features, "x", ""),
+    ifelse("age" %in% lasso_features, "x", ""),
+    ifelse("sexmale" %in% lasso_features, "x", ""),
+    ifelse("bmi" %in% lasso_features, "x", ""),
+    ifelse("children" %in% lasso_features, "x", ""),
+    ifelse("smokeryes" %in% lasso_features, "x", ""),
+    ifelse("regionnorthwest" %in% lasso_features, "x", ""),
+    ifelse("regionsoutheast" %in% lasso_features, "x", ""),
+    ifelse("regionsouthwest" %in% lasso_features, "x", "")
+  )
+)
+
+kableExtra::kbl(
+  feature_comparison,
+  caption = "Feature Selection Comparison",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  col.names = c("Feature", "Full Model", "Stepwise (AIC)", "Stepwise (BIC)", "LASSO")
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  knitr::asis_output()
+```
+
+## Interaction Model
+
+We include a BMI-smoking interaction term based on our findings in @fig-interaction-viz where we uncovered that BMI's effect on charges may not be constant across smoker vs. non-smoker groups.
+
+```{r interaction-model}
+interaction_model <- lm(charges ~ age + sex + bmi + children + smoker + region + bmi:smoker, data = train_data)
+interaction_summary <- summary(interaction_model)
+
+bmi_effect <- coef(interaction_model)["bmi"] # Effect of BMI for non-smokers
+smoking_effect <- coef(interaction_model)["smokeryes"] # Effect of smoking
+interaction_effect <- coef(interaction_model)["bmi:smokeryes"] # How BMI's effect changes for smokers
+bmi_effect_smokers <- bmi_effect + interaction_effect # Total BMI effect for smokers
+
+interaction_pred <- predict(interaction_model, newdata = test_data)
+interaction_mse <- mean((test_data$charges - interaction_pred)^2)
+interaction_rmse <- sqrt(interaction_mse) #avg prediction error
+interaction_r2 <- 1 - sum((test_data$charges - interaction_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+```
+
+```{r interaction-model-summary}
+int_coef_table <- data.frame(
+  Term = rownames(interaction_summary$coefficients),
+  Coefficient = round(interaction_summary$coefficients[,1], 2),
+  Std_Error = round(interaction_summary$coefficients[,2], 2),
+  t_value = round(interaction_summary$coefficients[,3], 2),
+  p_value = round(interaction_summary$coefficients[,4], 3)
+) %>%
+  dplyr::mutate(
+    Significant = ifelse(p_value < 0.05, "*", "")
+  )
+
+kableExtra::kbl(
+  int_coef_table,
+  caption = "Interaction Model Coefficients",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = c(0, 2, 2, 2, 3, 0),
+  col.names = c("Term", "Coefficient", "Std. Error", "t value", "p value", ""),
+  escape = FALSE
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  kableExtra::column_spec(5, bold = int_coef_table$p_value < 0.05) %>%
+  knitr::asis_output()
+```
+
+The interaction is significant (p \< 0.001). BMI effect: \$`r round(bmi_effect, 0)` (non-smokers), \$`r round(bmi_effect_smokers, 0)` (smokers).
+The different slopes shown below, illustrate the interaction - BMI’s effect on charges is steeper for smokers:
+```{r interaction-visual, fig.cap="BMI-Smoking Interaction Effect", fig.width=5, fig.height=3}
+new_data <- tidyr::expand_grid(
+  bmi = seq(min(insurance_data$bmi), max(insurance_data$bmi), length.out = 100),
+  smoker = c("yes", "no"),
+  age = median(insurance_data$age),
+  sex = "female",
+  children = median(insurance_data$children),
+  region = "southeast"
+)
+
+new_data$predicted_charges <- predict(interaction_model, newdata = new_data)
+
+ggplot2::ggplot(new_data, ggplot2::aes(x = bmi, y = predicted_charges, color = smoker)) +
+  ggplot2::geom_line(size = 1.2) +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = "Predicted Charges by BMI and Smoking Status",
+    subtitle = paste0(
+      "BMI effect: $", round(bmi_effect), " (non-smokers), $",
+      round(bmi_effect_smokers), " (smokers)"
+    ),
+    x = "BMI",
+    y = "Predicted Charges ($)",
+    color = "Smoker"
+  ) +
+  ggplot2::scale_y_continuous(labels = scales::comma) +
+  ggplot2::scale_color_brewer(palette = "Set1") +
+  ggplot2::annotate(
+    "text",
+    x = 30,
+    y = 15000,
+    label = paste0("Slope = $", round(bmi_effect)),
+    color = "#E41A1C",
+    fontface = "bold"
+  ) +
+  ggplot2::annotate(
+    "text",
+    x = 30,
+    y = 45000,
+    label = paste0("Slope = $", round(bmi_effect_smokers)),
+    color = "#377EB8",
+    fontface = "bold"
+  )
+```
+
+## Model Comparison
+
+```{r model-comparison}
+model_comparison <- data.frame(
+  Model = c("Full Model", "Stepwise (AIC)", "Stepwise (BIC)", "Ridge", "LASSO", "Interaction Model"),
+  RMSE = c(full_model_rmse, step_aic_rmse, step_bic_rmse, ridge_rmse, lasso_rmse, interaction_rmse),
+  R_Squared = c(full_model_r2, step_aic_r2, step_bic_r2, ridge_r2, lasso_r2, interaction_r2)
+) %>%
+  dplyr::arrange(RMSE) %>%
+  dplyr::mutate(
+    Bold = ifelse(RMSE == min(RMSE), "bold", "plain")
+  )
+
+kableExtra::kbl(
+  model_comparison[, c("Model", "RMSE", "R_Squared")],
+  caption = "Model Performance Comparison",
+  format = "latex",
+  booktabs = TRUE,
+  align = "c",
+  digits = c(0, 2, 3)
+) %>%
+  kableExtra::kable_styling(
+    latex_options = c("HOLD_position", "scale_down"),
+    font_size = 9,
+    position = "center"
+  ) %>%
+  kableExtra::row_spec(
+    which(model_comparison$RMSE == min(model_comparison$RMSE)),
+    bold = TRUE
+  ) %>%
+  knitr::asis_output()
+```
+
+```{r rmse-visualization, fig.cap="Model Comparison by RMSE", fig.width=5, fig.height=3}
+ggplot2::ggplot(model_comparison, ggplot2::aes(x = forcats::fct_reorder(Model, -RMSE), y = RMSE/1000, fill = Model)) +
+  ggplot2::geom_bar(stat = "identity") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = "Model Comparison by RMSE",
+    subtitle = "Lower RMSE indicates better performance",
+    x = "Model",
+    y = "RMSE (in thousands)"
+  ) +
+  ggplot2::theme(axis.text.x = ggplot2::element_text(angle = 45, hjust = 1)) +
+  ggplot2::scale_fill_brewer(palette = "Blues") +
+  ggplot2::geom_text(ggplot2::aes(label = round(RMSE/1000, 2)), vjust = -0.5) +
+  ggplot2::coord_cartesian(ylim = c(0, max(model_comparison$RMSE/1000) * 1.15))
+```
+
+The interaction model performs best, reducing RMSE by \$`r round(full_model_rmse - interaction_rmse, 2)`.
+
+# Residual Diagnostics
+
+```{r residual-diagnostics}
+residuals <- residuals(interaction_model)
+fitted_values <- fitted(interaction_model)
+```
+
+```{r resid-fitted, fig.cap="Residuals vs. Fitted Values", fig.width=4, fig.height=3}
+data.frame(Fitted = fitted_values, Residuals = residuals) %>%
+  ggplot2::ggplot(ggplot2::aes(x = Fitted, y = Residuals)) +
+  ggplot2::geom_point(alpha = 0.5) +
+  ggplot2::geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  ggplot2::geom_smooth(method = "loess", se = FALSE, color = "blue") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = "Residuals vs Fitted Values",
+    subtitle = "Linearity and homoscedasticity check",
+    x = "Fitted Values",
+    y = "Residuals"
+  ) +
+  ggplot2::scale_x_continuous(labels = scales::comma)
+```
+
+```{r residual-normality, fig.cap="Normal Q-Q Plot", fig.width=4, fig.height=3}
+data.frame(Residuals = residuals) %>%
+  ggplot2::ggplot(ggplot2::aes(sample = Residuals)) +
+  ggplot2::stat_qq() +
+  ggplot2::stat_qq_line(color = "red") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = "Normal Q-Q Plot",
+    subtitle = "Normality check",
+    x = "Theoretical Quantiles",
+    y = "Sample Quantiles"
+  )
+```
+
+```{r scale-location, fig.cap="Scale-Location Plot", fig.width=4, fig.height=3}
+data.frame(Fitted = fitted_values, Residuals = sqrt(abs(residuals))) %>%
+  ggplot2::ggplot(ggplot2::aes(x = Fitted, y = Residuals)) +
+  ggplot2::geom_point(alpha = 0.5) +
+  ggplot2::geom_smooth(method = "loess", se = FALSE, color = "red") +
+  ggplot2::theme_minimal() +
+  ggplot2::labs(
+    title = "Scale-Location Plot",
+    subtitle = "Homoscedasticity check",
+    x = "Fitted Values",
+    y = "√|Standardized Residuals|"
+  ) %>%
+  ggplot2::scale_x_continuous(labels = scales::comma)
+```
+
+Diagnostics show acceptable linearity and normality, with some heteroscedasticity at higher values, suggesting potential log transformation or robust methods such as robust standard errors, weighted least squares, quantile regression, or generalised least squares (GLS) can be used to address heteroscedasticity when model residuals show increasing variance..
+
+# Conclusion
+
+## Key Findings
+
+-   **Best Model**: Interaction model, RMSE \$`r scales::comma(model_comparison$RMSE[model_comparison$Model == "Interaction Model"])`, R² `r round(interaction_r2, 3)`
+-   **Key Predictors**: Smoking (\$20,000 increase), BMI-smoking interaction (6× stronger for smokers), age, children
+-   **Cost Implications**: A 50-year-old smoker (BMI 30) pays \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="yes", region="southeast"))))` vs. \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="no", region="southeast"))))` as a non-smoker
+
+## Practical Implications
+
+1. **Individuals**:
+   - Quitting smoking offers the largest potential insurance savings
+   - Weight management is particularly crucial for smokers, as the financial impact of BMI is much stronger
+   - The combined effect of not smoking and maintaining healthy BMI could reduce annual costs by more than $25,000 for some individuals
+   - Age-related cost increases are inevitable but relatively modest compared to lifestyle factors
+
+2. **Insurance Providers**:
+   - Risk assessment should incorporate the interaction between smoking and BMI
+   - More personalized premium structures could better reflect the compounding effects of multiple risk factors
+   - Prevention programs focused on smoking cessation for overweight individuals could yield substantial cost savings
+   - Predictive models should include interaction terms to accurately estimate costs
+
+3. **Healthcare Policy**:
+   - Public health initiatives targeting smoking cessation among overweight and obese individuals could yield disproportionately large healthcare savings
+   - Programs might benefit from focusing efforts on regions with higher baseline costs
+   - Weight management programs specifically designed for smokers could deliver enhanced value
+
+## Limitations and Future Work
+
+1. **Data Limitations**:
+   - The dataset may not capture all relevant factors affecting insurance costs
+   - Additional variables like pre-existing conditions, medication usage, or healthcare utilization patterns would likely improve predictions
+   - Cross-sectional data limits our ability to analyze how changes in risk factors affect charges over time
+
+2. **Modeling Considerations**:
+   - Log transformation of charges might better address heteroscedasticity
+   - Additional interactions (e.g, age×BMI) could potentially improve model performance
+   - More sophisticated machine learning approaches might capture complex nonlinear relationships
+   - Separate models for different regions or age groups might provide more tailored predictions
+
+3. **Future Research Directions**:
+   - Longitudinal studies to assess how changes in risk factors affect insurance costs over time
+   - Analysis of cost-effectiveness of targeted interventions based on the interaction patterns identified
+   - Exploration of additional interaction effects among demographic and health variables
+   - Development of personalized risk calculators incorporating the identified factors
+
+Our analysis provides valuable insights into the key drivers of health insurance costs, highlighting the dramatic impact of smoking, its interaction with BMI, and the significant influence of age. These findings can inform more effective risk assessment practices, precision-targeted public health interventions, and improved insurance pricing models, ultimately benefiting both individuals and healthcare systems.
