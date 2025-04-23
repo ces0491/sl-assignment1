@@ -2,7 +2,7 @@
 title: "Medical Insurance Cost Prediction"
 subtitle: "Supervised Learning - Assignment 1"
 author: "Cesaire Tobias"
-date: "April 16, 2025"
+date: "April 29, 2025"
 format:
   pdf:
     toc: true
@@ -74,7 +74,7 @@ if (dir.exists(base_data_dir)) {
 
 # Introduction
 
-This report applies linear regression techniques to predict medical insurance costs (charges) in the United States (US) healthcare system. We seek to construct a linear supervised learning model to identify key determinants of individual medical costs billed by health insurance for patients in the US. In doing so, we propose some solutions to address the following questions for stakeholders:
+This report applies linear regression techniques to predict medical insurance costs (charges) in the United States (US) healthcare system. We seek to construct a linear supervised learning model to identify key determinants of individual medical costs billed by health insurance companies for patients in the US. In doing so, we propose some solutions to address the following questions for stakeholders:
 
 -   **Patients**: Which personal factors most impact insurance charges?
 -   **Insurers**: How can risk be accurately quantified for premiums?
@@ -89,11 +89,11 @@ The dataset includes 500 US patients with the following 6 features:
 -   **smoker**: Factor, smoking status (yes/no)
 -   **region**: Factor, US residential area (northeast, southeast, southwest, northwest)
 
-The target variable is **charges** - medical costs billed. We aim to build linear models that predict charges based on the aforementioned characteristics, identifying key factors and interactions.
+The target variable is **charges** (medical costs billed). We aim to build linear models that predict charges based on the aforementioned characteristics, identifying key factors and interactions.
 
 # Data Import and Preparation
 
-We use a sub-sample of 500 observations, randomly selected with seed `r my_seed`` for reproducibility.  
+We use a sub-sample of 500 observations, randomly selected with seed `r my_seed` for reproducibility.  
 The `.RData` file containing both the full insurance data set (`fulldata`) and sampled data (`my_data`) can be found [here](https://github.com/ces0491/sl-assignment1/raw/refs/heads/main/data/insurance_data.RData).  
 The original dataset can be found on Kaggle, [here](https://www.kaggle.com/datasets/mirichoi0218/insurance).  
 Please see the GitHub repo [here](https://github.com/ces0491/sl-assignment1.git) for the full codebase.
@@ -239,12 +239,13 @@ kableExtra::kbl(
 Key characteristics:
 
 -   **Age**: 18–65 years, median `r median(insurance_data$age)` years
--   **BMI**: Median `r round(median(insurance_data$bmi), 1)`, overweight range (25–30)
--   **Children**: Mostly 0–1, max `r max(insurance_data$children)`
--   **Charges**: \$`r scales::comma(min(insurance_data$charges))` to \$`r scales::comma(max(insurance_data$charges))`, right-skewed
 -   **Sex**: `r round(sex_table["female"]/sum(sex_table)*100, 1)`% female
+-   **BMI**: Median `r round(median(insurance_data$bmi), 1)` (overweight range: 25–30)
 -   **Smoker**: `r round(smoker_table["yes"]/sum(smoker_table)*100, 1)`% smokers
 -   **Region**: Evenly distributed
+-   **Children**: Mostly 0–1, max `r max(insurance_data$children)`
+
+-   **Charges**: \$`r scales::comma(min(insurance_data$charges))` to \$`r scales::comma(max(insurance_data$charges))` (right-skewed)
 
 ## Visual Analysis
 
@@ -324,8 +325,7 @@ Correlations: age (r = `r round(correlation_matrix['age','charges'], 2)`), BMI (
 -   **Smoking**: Dominant factor, significantly increasing charges
 -   **Age**: Linear increase in charges
 -   **BMI**: Stronger effect for smokers
--   **Children**: Modest effect
--   **Region/Gender**: Minor impact
+-   **Children, Region and Sex**: Modest effect
 -   **Charges**: Right-skewed distribution
 
 # Model Building
@@ -340,8 +340,8 @@ train_data <- insurance_data[train_indices, ]
 test_data <- insurance_data[-train_indices, ]
 ```
 
-`r paste0("Training set:", nrow(train_data), "observations (", scales::percent(train_split), ") of ", nrow(insurance_data), " in the total sample")`
-`r paste0("Testing set:", nrow(test_data), "observations")`
+| `r paste0("Training set: ", nrow(train_data), " observations (", scales::percent(train_split), ") of ", nrow(insurance_data), " in the total sample")`
+| `r paste0("Testing set: ", nrow(test_data), " observations")`
 
 ## Full Regression Model
 
@@ -697,52 +697,52 @@ data.frame(Fitted = fitted_values, Residuals = sqrt(abs(residuals))) %>%
   ggplot2::scale_x_continuous(labels = scales::comma)
 ```
 
-Diagnostics show acceptable linearity and normality, with some heteroscedasticity at higher values, suggesting potential log transformation or robust methods such as robust standard errors, weighted least squares, quantile regression, or generalised least squares (GLS) can be used to address heteroscedasticity when model residuals show increasing variance..
+Diagnostics show acceptable linearity and normality, with some heteroscedasticity at higher values, suggesting potential for log transformation or robust methods such as robust standard errors, weighted least squares, quantile regression, or generalised least squares (GLS) to address heteroscedasticity when model residuals show increasing variance.
 
 # Conclusion
 
 ## Key Findings
 
 -   **Best Model**: Interaction model, RMSE \$`r scales::comma(model_comparison$RMSE[model_comparison$Model == "Interaction Model"])`, R² `r round(interaction_r2, 3)`
--   **Key Predictors**: Smoking (\$20,000 increase), BMI-smoking interaction (6× stronger for smokers), age, children
--   **Cost Implications**: A 50-year-old smoker (BMI 30) pays \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="yes", region="southeast"))))` vs. \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="no", region="southeast"))))` as a non-smoker
+-   **Key Predictors**: Smoking (\$20,000 increase), BMI-smoking interaction (6× stronger for smokers), age, children.
+-   **Cost Implications**: A 50-year-old smoker (BMI 30) pays \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="yes", region="southeast"))))` vs. \$`r scales::comma(round(predict(interaction_model, data.frame(age=50, sex="male", bmi=30, children=0, smoker="no", region="southeast"))))` as a non-smoker.
 
 ## Practical Implications
 
 1. **Individuals**:
-   - Quitting smoking offers the largest potential insurance savings
-   - Weight management is particularly crucial for smokers, as the financial impact of BMI is much stronger
-   - The combined effect of not smoking and maintaining healthy BMI could reduce annual costs by more than $25,000 for some individuals
-   - Age-related cost increases are inevitable but relatively modest compared to lifestyle factors
+   - Quitting smoking offers the largest potential insurance savings.
+   - Weight management is particularly crucial for smokers, as the financial impact of BMI is much stronger.
+   - The combined effect of not smoking and maintaining healthy BMI could reduce annual costs by more than $25,000 for some individuals.
+   - Age-related cost increases are inevitable but relatively modest compared to lifestyle factors.
 
 2. **Insurance Providers**:
-   - Risk assessment should incorporate the interaction between smoking and BMI
-   - More personalized premium structures could better reflect the compounding effects of multiple risk factors
-   - Prevention programs focused on smoking cessation for overweight individuals could yield substantial cost savings
-   - Predictive models should include interaction terms to accurately estimate costs
+   - Risk assessment should incorporate the interaction between smoking and BMI.
+    + Predictive models, in general, should consider interaction terms to accurately estimate costs.
+   - More personalized premium structures could better reflect the compounding effects of multiple risk factors.
+   - Prevention programs focused on smoking cessation for overweight individuals could yield substantial cost savings.
 
 3. **Healthcare Policy**:
-   - Public health initiatives targeting smoking cessation among overweight and obese individuals could yield disproportionately large healthcare savings
+   - Public health initiatives targeting smoking cessation among overweight and obese individuals could yield disproportionately large healthcare savings.
    - Programs might benefit from focusing efforts on regions with higher baseline costs
-   - Weight management programs specifically designed for smokers could deliver enhanced value
+   - Weight management programs specifically designed for smokers could deliver enhanced value.
 
 ## Limitations and Future Work
 
 1. **Data Limitations**:
-   - The dataset may not capture all relevant factors affecting insurance costs
-   - Additional variables like pre-existing conditions, medication usage, or healthcare utilization patterns would likely improve predictions
-   - Cross-sectional data limits our ability to analyze how changes in risk factors affect charges over time
+   - The dataset may not capture all relevant factors affecting insurance costs.
+   - Additional variables like pre-existing conditions, medication usage, or healthcare utilization patterns would likely improve predictions.
+   - Cross-sectional data limits our ability to analyze how changes in risk factors affect charges over time.
 
 2. **Modeling Considerations**:
-   - Log transformation of charges might better address heteroscedasticity
-   - Additional interactions (e.g, age×BMI) could potentially improve model performance
-   - More sophisticated machine learning approaches might capture complex nonlinear relationships
-   - Separate models for different regions or age groups might provide more tailored predictions
+   - Log transformation of charges might better address heteroscedasticity.
+   - Additional interactions (e.g, age×BMI) could potentially improve model performance.
+   - More sophisticated machine learning approaches might capture complex nonlinear relationships.
+   - Separate models for different regions or age groups might provide more tailored predictions.
 
 3. **Future Research Directions**:
-   - Longitudinal studies to assess how changes in risk factors affect insurance costs over time
-   - Analysis of cost-effectiveness of targeted interventions based on the interaction patterns identified
-   - Exploration of additional interaction effects among demographic and health variables
-   - Development of personalized risk calculators incorporating the identified factors
+   - Longitudinal studies to assess how changes in risk factors affect insurance costs over time.
+   - Analysis of cost-effectiveness of targeted interventions based on the interaction patterns identified.
+   - Exploration of additional interaction effects among demographic and health variables.
+   - Development of personalized risk calculators incorporating the identified factors.
 
-Our analysis provides valuable insights into the key drivers of health insurance costs, highlighting the dramatic impact of smoking, its interaction with BMI, and the significant influence of age. These findings can inform more effective risk assessment practices, precision-targeted public health interventions, and improved insurance pricing models, ultimately benefiting both individuals and healthcare systems.
+Our analysis provides some insight into the key drivers of health insurance costs, highlighting the dramatic impact of smoking, its interaction with BMI, and the significant influence of age. These findings can inform more effective risk assessment practices, precision-targeted public health interventions, and improved insurance pricing models, ultimately benefiting both individuals and healthcare systems.
