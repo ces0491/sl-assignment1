@@ -21,25 +21,28 @@ execute:
 ---
 
 ```{r setup, include=FALSE}
-library(knitr)
-library(dplyr)
-library(tidyr)
-library(ggplot2)
-library(gridExtra)
-library(kableExtra)
-library(scales)
-library(corrplot)
-library(MASS)
-library(glmnet)
+# Load required libraries - although we use the namespace convention the below indicates the required packages to run this file
 
+library(knitr)       # For dynamic report generation
+library(dplyr)       # For data manipulation
+library(tidyr)       # For data tidying
+library(ggplot2)     # For data visualisation
+library(gridExtra)   # For arranging multiple plots
+library(kableExtra)  # For enhanced table formatting
+library(scales)      # For formatting plot scales
+library(corrplot)    # For correlation visualisation
+library(MASS)        # For statistical functions like stepAIC
+library(glmnet)      # For regularised regression models
+
+# Set default chunk options for the entire document
 knitr::opts_chunk$set(
-  echo = FALSE,
-  warning = FALSE,
-  message = FALSE,
-  fig.align = "center",
-  fig.pos = "H",
-  out.width = "80%",
-  results = "asis"
+  echo = FALSE,      # Don't show code in final output
+  warning = FALSE,   # Suppress warnings
+  message = FALSE,   # Suppress messages
+  fig.align = "center",  # Center figures
+  fig.pos = "H",     # Position figures exactly here
+  out.width = "80%", # Set figure width
+  results = "asis"   # Output results as-is
 )
 ```
 
@@ -52,19 +55,22 @@ github_data_url <- "https://github.com/ces0491/sl-assignment1/raw/refs/heads/mai
 kaggle_url <- 'kagglehub.dataset_download("mirichoi0218/insurance")'
 
 my_seed <- 756
+sample_size <- 500
+
+#-------------------------------------------------------------------------
 
 # read in full data either from file or github repo
 if (file.exists(file.path(base_data_dir, "insurance.csv"))) {
   fulldata <- read.csv(file.path(base_data_dir, "insurance.csv"))
 } else {
   con <- url(github_data_url)
-  load(github_data_url)
+  load(con)
   close(con)
 }
 
 # sample the data
 set.seed(my_seed)
-insurance_data <- fulldata[sample(nrow(fulldata), 500), ]
+insurance_data <- fulldata[sample(nrow(fulldata), sample_size), ]
 
 # save the sampled data
 if (dir.exists(base_data_dir)) {
@@ -103,6 +109,7 @@ if (!exists("insurance_data") || any(is.na(insurance_data))) {
   stop("Insurance data is missing or contains NAs")
 }
 
+# Convert character columns to factors and ensure no. of children is integer
 insurance_data <- dplyr::mutate(
   insurance_data,
   sex = as.factor(sex),
@@ -119,10 +126,12 @@ insurance_data <- dplyr::mutate(
 A sample of the dataset is shown below:
 
 ```{r show-data-head}
+# Display top 5 rows of data
 top_n_sample <- insurance_data %>%
   dplyr::top_n(5) %>%
   dplyr::mutate(dplyr::across(c(age, bmi, children, charges), ~round(.x, 2)))
 
+# Create formatted table
 kableExtra::kbl(
   top_n_sample,
   caption = "Insurance Dataset Sample (First 5 Rows)",
@@ -142,12 +151,13 @@ kableExtra::kbl(
 Summary statistics for numerical variables:
 
 ```{r summary-stats}
+# Calculate summary statistics for numerical variables
 summ_stats <- insurance_data %>%
-  dplyr::select(age, bmi, children, charges) %>%
+  dplyr::select(age, bmi, children, charges) %>% # Select numeric columns
   dplyr::summarise(
     dplyr::across(
-      .cols = dplyr::everything(),
-      .fns = list(
+      .cols = dplyr::everything(), # Apply to all columns
+      .fns = list(                 # Calculate multiple summ stats
         Min = ~min(.x, na.rm = TRUE),
         Q1 = ~quantile(.x, 0.25, na.rm = TRUE),
         Median = ~median(.x, na.rm = TRUE),
@@ -155,9 +165,9 @@ summ_stats <- insurance_data %>%
         Q3 = ~quantile(.x, 0.75, na.rm = TRUE),
         Max = ~max(.x, na.rm = TRUE)
       ),
-      .names = "{.col}_{.fn}"
+      .names = "{.col}_{.fn}" # Name columns as variable_statistic
     )
-  ) %>%
+  ) %>% # Reshape data for better presentation
   tidyr::pivot_longer(
     cols = dplyr::everything(),
     names_to = c("Variable", "Statistic"),
@@ -166,7 +176,7 @@ summ_stats <- insurance_data %>%
   ) %>%
   tidyr::pivot_wider(names_from = Statistic, values_from = Value) %>%
   dplyr::mutate(
-    Variable = dplyr::recode(
+    Variable = dplyr::recode(  # Rename variables for presentation
       Variable,
       "age" = "Age",
       "bmi" = "BMI",
@@ -175,6 +185,7 @@ summ_stats <- insurance_data %>%
     )
   )
 
+# Create formatted table
 kableExtra::kbl(
   summ_stats,
   caption = "Summary Statistics of Numerical Variables",
@@ -270,7 +281,7 @@ p1 <- ggplot2::ggplot(insurance_data, ggplot2::aes(x = smoker, y = charges, fill
 
 p2 <- ggplot2::ggplot(insurance_data, ggplot2::aes(x = bmi, y = charges, color = smoker)) +
   ggplot2::geom_point(alpha = 0.5) +
-  ggplot2::geom_smooth(method = "lm", se = FALSE) +
+  ggplot2::geom_smooth(method = "lm", se = FALSE) + # Add linear trend line
   ggplot2::theme_minimal() +
   ggplot2::labs(x = "BMI", y = "Charges ($)") +
   ggplot2::scale_y_continuous(labels = scales::comma) +
@@ -282,13 +293,14 @@ gridExtra::grid.arrange(p1, p2, ncol = 2)
 Smokers face 3–4 times higher charges. BMI has a stronger effect on charges for smokers, indicating an interaction.
 
 ```{r age-charges, fig.cap="Age vs. Charges", fig.width=5, fig.height=3}
+# Create scatterplot of age vs charges with smoothing line
 ggplot2::ggplot(insurance_data, ggplot2::aes(x = age, y = charges, color = smoker)) +
-  ggplot2::geom_point(alpha = 0.5) +
-  ggplot2::geom_smooth(method = "lm", se = TRUE, color = "black") +
+  ggplot2::geom_point(alpha = 0.5) +  # Semi-transparent points
+  ggplot2::geom_smooth(method = "lm", se = TRUE, color = "black") +  # Overall trend line
   ggplot2::theme_minimal() +
   ggplot2::labs(x = "Age (years)", y = "Charges ($)") +
-  ggplot2::scale_y_continuous(labels = scales::comma) +
-  ggplot2::scale_color_brewer(palette = "Set1")
+  ggplot2::scale_y_continuous(labels = scales::comma) +  # Format y-axis
+  ggplot2::scale_color_brewer(palette = "Set1")  # Color by smoking status
 ```
 
 Age has a positive linear relationship with charges.
@@ -333,9 +345,13 @@ Correlations: age (r = `r round(correlation_matrix['age','charges'], 2)`), BMI (
 ## Data Splitting
 
 ```{r data-split}
-set.seed(my_seed)
-train_split <- 0.8
+set.seed(my_seed) # Set seed for reproducible random sampling
+train_split <- 0.8 # Define train/test split ratio
+
+# Create random indices for training data — sample without replacement
 train_indices <- sample(nrow(insurance_data), train_split * nrow(insurance_data))
+
+# Split data into training and testing sets
 train_data <- insurance_data[train_indices, ]
 test_data <- insurance_data[-train_indices, ]
 ```
@@ -346,11 +362,13 @@ test_data <- insurance_data[-train_indices, ]
 ## Full Regression Model
 
 ```{r full-model}
+# Fit linear regression model with all predictors
 full_model <- lm(charges ~ age + sex + bmi + children + smoker + region, data = train_data)
 full_model_summary <- summary(full_model)
 ```
 
 ```{r full-model-table}
+# Create coefficient table from model summary
 coef_table <- data.frame(
   Term = rownames(full_model_summary$coefficients),
   Coefficient = round(full_model_summary$coefficients[,1], 2),
@@ -362,6 +380,7 @@ coef_table <- data.frame(
     Significant = ifelse(p_value < 0.05, "*", "")
   )
 
+# Format neatly
 kableExtra::kbl(
   coef_table,
   caption = "Full Regression Model Coefficients",
@@ -384,11 +403,14 @@ kableExtra::kbl(
 R² = `r round(full_model_summary$r.squared, 3)`. Smoking, age, and BMI are significant predictors.
 
 ```{r full-model-predict}
+# Make predictions on test data
 full_model_pred <- predict(full_model, newdata = test_data)
-full_model_mse <- mean((test_data$charges - full_model_pred)^2)
-full_model_rmse <- sqrt(full_model_mse)
-full_model_mae <- mean(abs(test_data$charges - full_model_pred))
-full_model_r2 <- 1 - sum((test_data$charges - full_model_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+
+# Calculate performance metrics
+full_model_mse <- mean((test_data$charges - full_model_pred)^2)  # Mean squared error
+full_model_rmse <- sqrt(full_model_mse)  # Root mean squared error
+full_model_mae <- mean(abs(test_data$charges - full_model_pred))  # Mean absolute error
+full_model_r2 <- 1 - sum((test_data$charges - full_model_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)  # R-squared
 ```
 
 Test metrics: RMSE \$`r scales::comma(full_model_rmse)`, MAE \$`r scales::comma(full_model_mae)`, R² `r round(full_model_r2, 3)`.
@@ -400,52 +422,74 @@ Test metrics: RMSE \$`r scales::comma(full_model_rmse)`, MAE \$`r scales::comma(
 We explored stepwise (AIC/BIC), Ridge, and LASSO regression.
 
 ```{r model-improvement}
+# Stepwise model selection using AIC
 step_model_aic <- MASS::stepAIC(full_model, direction = "backward", trace = FALSE)
+
+# Stepwise model selection using BIC (more stringent penalty -> simpler models)
 step_model_bic <- MASS::stepAIC(full_model, direction = "backward", k = log(nrow(train_data)), trace = FALSE)
 
+# Calculate metrics for AIC model
 step_aic_pred <- predict(step_model_aic, newdata = test_data)
 step_aic_mse <- mean((test_data$charges - step_aic_pred)^2)
 step_aic_rmse <- sqrt(step_aic_mse)
-step_aic_r2 <- 1 - sum((test_data$charges - step_aic_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
+step_aic_r2 <- 1 - sum((test_data$charges - step_aic_pred)^2) / 
+  sum((test_data$charges - mean(test_data$charges))^2)
 
+# Calculate metrics for BIC model
 step_bic_pred <- predict(step_model_bic, newdata = test_data)
 step_bic_mse <- mean((test_data$charges - step_bic_pred)^2)
 step_bic_rmse <- sqrt(step_bic_mse)
 step_bic_r2 <- 1 - sum((test_data$charges - step_bic_pred)^2) / sum((test_data$charges - mean(test_data$charges))^2)
 
-x_train <- model.matrix(charges ~ age + sex + bmi + children + smoker + region, train_data)[,-1]
+# Prepare data for regularized regression
+##  Convert categorical variables to dummy variables and remove intercept (first column)
+x_train <- model.matrix(charges ~ age + sex + bmi + children + smoker + region, train_data)[,-1] # Regularization methods require numeric matrices as input. model.matrix() automatically handles factor variables.
 y_train <- train_data$charges
 x_test <- model.matrix(charges ~ age + sex + bmi + children + smoker + region, test_data)[,-1]
 y_test <- test_data$charges
 
+# Fit Ridge model using cross-validation to choose lambda (regularization strength)
 set.seed(my_seed)
-cv_ridge <- glmnet::cv.glmnet(x_train, y_train, alpha = 0, nfolds = 10)
-lambda_ridge <- cv_ridge$lambda.min
+cv_ridge <- glmnet::cv.glmnet(x_train, y_train, alpha = 0, nfolds = 10)  # alpha=0 for ridge
+lambda_ridge <- cv_ridge$lambda.min  # Optimal lambda
+
+# Refit the model with optimal lambda
 ridge_model <- glmnet::glmnet(x_train, y_train, alpha = 0, lambda = lambda_ridge)
 ridge_pred <- predict(ridge_model, s = lambda_ridge, newx = x_test)
+
+# Evaluate Ridge model performance
 ridge_mse <- mean((y_test - ridge_pred)^2)
 ridge_rmse <- sqrt(ridge_mse)
 ridge_r2 <- 1 - sum((y_test - ridge_pred)^2) / sum((y_test - mean(y_test))^2)
 
-cv_lasso <- glmnet::cv.glmnet(x_train, y_train, alpha = 1, nfolds = 10)
-lambda_lasso <- cv_lasso$lambda.min
+# Ridge regression shrinks coefficients toward zero but keeps all variables in the model. This helps with multicollinearity and overfitting.
+
+# LASSO regression with cross-validation
+cv_lasso <- glmnet::cv.glmnet(x_train, y_train, alpha = 1, nfolds = 10)  # alpha=1 for LASSO
+lambda_lasso <- cv_lasso$lambda.min  # Optimal lambda
 lasso_model <- glmnet::glmnet(x_train, y_train, alpha = 1, lambda = lambda_lasso)
 lasso_pred <- predict(lasso_model, s = lambda_lasso, newx = x_test)
+
+# Evaluate LASSO model performance
 lasso_mse <- mean((y_test - lasso_pred)^2)
 lasso_rmse <- sqrt(lasso_mse)
 lasso_r2 <- 1 - sum((y_test - lasso_pred)^2) / sum((y_test - mean(y_test))^2)
 ```
 
 ```{r stepwise-features}
+# Extract features selected by each method
 step_aic_features <- names(coef(step_model_aic))
 step_bic_features <- names(coef(step_model_bic))
 lasso_coefs <- coef(lasso_model, s = lambda_lasso)
-lasso_features <- rownames(lasso_coefs)[lasso_coefs[,1] != 0]
+lasso_features <- rownames(lasso_coefs)[lasso_coefs[,1] != 0]  # Non-zero coefficients
 
+# Since ridge regression shrinks coefficients toward zero but never actually sets them exactly to zero, all predictors remain in the model and we exclude from comparing with feature selection methods.
+
+# Create comparison table of selected features
 feature_comparison <- data.frame(
   Feature = c("Intercept", "Age", "Sex (male)", "BMI", "Children", "Smoker (yes)",
               "Region (northwest)", "Region (southeast)", "Region (southwest)"),
-  Full_Model = rep("x", 9),
+  Full_Model = rep("x", 9),  # All features included in full model
   Stepwise_AIC = c(
     ifelse("(Intercept)" %in% step_aic_features, "x", ""),
     ifelse("age" %in% step_aic_features, "x", ""),
@@ -481,6 +525,7 @@ feature_comparison <- data.frame(
   )
 )
 
+# Create formatted table
 kableExtra::kbl(
   feature_comparison,
   caption = "Feature Selection Comparison",

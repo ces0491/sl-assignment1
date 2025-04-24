@@ -65,7 +65,7 @@ if (file.exists(file.path(base_data_dir, "insurance.csv"))) {
   fulldata <- read.csv(file.path(base_data_dir, "insurance.csv"))
 } else {
   con <- url(github_data_url)
-  load(github_data_url)
+  load(con)
   close(con)
 }
 
